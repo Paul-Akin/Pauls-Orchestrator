@@ -14,6 +14,8 @@ from __future__ import annotations
 import secrets
 
 from fastapi import HTTPException, Request, status
+from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from hub.settings import Settings
 
@@ -56,3 +58,26 @@ async def require_api_token(request: Request) -> None:
 
 def bearer_from_request(request: Request) -> str | None:
     return _bearer(request.headers.get("authorization"))
+
+
+class BearerTokenASGI:
+    """Wraps a mounted ASGI app (the MCP endpoint) with the same API-token rule."""
+
+    def __init__(self, app: ASGIApp, settings: Settings) -> None:
+        self.app = app
+        self.settings = settings
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            headers = {
+                k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]
+            }
+            if not api_token_ok(self.settings, headers.get("authorization")):
+                response = JSONResponse(
+                    {"detail": "missing or invalid API token"},
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)

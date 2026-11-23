@@ -13,16 +13,22 @@ from pathlib import Path
 import structlog
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.types import ASGIApp
 
 from hub import __name__ as _pkg
 from hub.api import chat, devices, system
 from hub.api import memory as memory_api  # aliased: create_app has a `memory` parameter
+from hub.api.auth import BearerTokenASGI
 from hub.config import AppConfig, MemoryConfig, check_runtime, load_config
 from hub.context.builder import ContextBuilder, PassThroughContextBuilder
 from hub.context.memory_builder import MemoryContextBuilder
+from hub.mcp_server import build_mcp_server
 from hub.memory.embedder import OllamaEmbedder
 from hub.memory.index import MemoryIndex
+from hub.memory.protocol import Sensitivity
 from hub.memory.retrieval import RetrievalParams
 from hub.memory.store import LocalMemoryProvider
 from hub.memory.watch import initial_reindex, watch_memory
@@ -131,6 +137,8 @@ def create_app(
     else:
         mqtt_on = config.hub.mqtt.enabled
 
+    mcp_server, mcp_asgi = _build_mcp(state)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         for w in state.warnings:
@@ -151,7 +159,11 @@ def create_app(
             if config.hub.memory.watch:
                 tasks.append(asyncio.create_task(watch_memory(state.memory), name="mem-watch"))
         try:
-            async with devices.lifespan(app, state, mqtt_enabled=mqtt_on):
+            async with contextlib.AsyncExitStack() as stack:
+                if mcp_server is not None:
+                    # A mounted sub-app's lifespan never runs, so start MCP sessions here.
+                    await stack.enter_async_context(mcp_server.session_manager.run())
+                await stack.enter_async_context(devices.lifespan(app, state, mqtt_enabled=mqtt_on))
                 yield
         finally:
             for t in tasks:
@@ -169,6 +181,8 @@ def create_app(
         redoc_url=None,
     )
     app.state.hub = state
+    if mcp_asgi is not None:
+        app.mount("/mcp", mcp_asgi, name="mcp")  # before the "/" static catch-all
     app.add_middleware(
         TrustedHostMiddleware, allowed_hosts=config.hub.server.effective_allowed_hosts()
     )
@@ -179,6 +193,25 @@ def create_app(
     static_dir = Path(str(files(_pkg).joinpath("web/static")))
     app.mount("/", StaticFiles(directory=static_dir, html=True), name="web")
     return app
+
+
+def _build_mcp(state: HubState) -> tuple[MCPServer | None, ASGIApp | None]:
+    """The read-only memory MCP server, mounted at /mcp/ (docs/adr/0006)."""
+    mcp_cfg = state.config.hub.memory.mcp
+    if state.memory is None or not mcp_cfg.enabled:
+        return None, None
+    cap = Sensitivity.parse(mcp_cfg.max_sensitivity)
+    assert cap is not None
+    server = build_mcp_server(state.memory, max_sensitivity=cap, version=VERSION)
+    hosts = state.config.hub.server.effective_allowed_hosts()
+    security = TransportSecuritySettings(
+        # The hub's TrustedHostMiddleware already checks Host; the SDK's check adds an
+        # Origin check that stops browser pages from driving the endpoint.
+        enable_dns_rebinding_protection="*" not in hosts,
+        allowed_hosts=[f"{h}:*" for h in hosts] + hosts,
+    )
+    asgi = server.streamable_http_app(streamable_http_path="/", transport_security=security)
+    return server, BearerTokenASGI(asgi, state.settings)
 
 
 def app_factory() -> FastAPI:

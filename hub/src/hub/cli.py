@@ -326,6 +326,39 @@ def memory_stats() -> None:
         typer.echo(f"{key:<26} {value}")
 
 
+@app.command()
+def mcp() -> None:
+    """Serve the memory store over MCP stdio (for Claude Desktop / Claude Code on this PC).
+
+    Read-only, capped at memory.mcp.max_sensitivity (never private). Logs go to
+    stderr; stdout carries the MCP protocol. The index is kept fresh by the
+    running hub (`hub serve`); this process only reads it.
+    """
+    import asyncio
+
+    from hub.api.app import build_memory
+    from hub.config import ConfigError, check_runtime
+    from hub.log import configure_logging
+    from hub.mcp_server import build_mcp_server
+    from hub.memory.protocol import Sensitivity
+
+    settings, cfg = _load()
+    try:
+        check_runtime(cfg, settings)
+    except ConfigError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(2) from None
+    mem_cfg = cfg.hub.memory
+    if not mem_cfg.enabled or not mem_cfg.mcp.enabled:
+        typer.secho("memory or memory.mcp is disabled in hub.yaml", fg=typer.colors.RED, err=True)
+        raise typer.Exit(2)
+    configure_logging(cfg.hub.log_level, cfg.hub.log_format)  # stderr only
+    cap = Sensitivity.parse(mem_cfg.mcp.max_sensitivity)
+    assert cap is not None
+    server = build_mcp_server(build_memory(settings, mem_cfg), max_sensitivity=cap)
+    asyncio.run(server.run_stdio_async())
+
+
 def main() -> None:
     app()
 
