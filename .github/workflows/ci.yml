@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.32"
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install (locked)
+        run: uv sync --frozen
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Ruff format
+        run: uv run ruff format --check .
+
+      - name: Mypy (strict, hub/src)
+        run: uv run mypy
+
+      - name: Pytest (no network; live provider tests are opt-in)
+        run: uv run pytest
+
+      - name: Protocol models match protocol/schemas
+        run: |
+          uv run datamodel-codegen
+          if [ -n "$(git status --porcelain hub/src/hub/events/generated)" ]; then
+            echo "::error::hub/src/hub/events/generated is stale. Run 'uv run datamodel-codegen' and commit."
+            git status --porcelain hub/src/hub/events/generated
+            git diff hub/src/hub/events/generated
+            exit 1
+          fi
+
+      - name: Compose file is valid
+        run: docker compose config -q
