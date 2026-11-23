@@ -1,0 +1,57 @@
+# Hub + Mosquitto.
+#
+#   1. cp .env.example .env   and fill in keys, HUB_API_TOKEN, HUB_MQTT_PASSWORD, HUB_DEVICE_TOKENS
+#   2. uv run python deploy/mosquitto/make_passwd.py
+#   3. docker compose up -d            (broker + hub)
+#      docker compose up -d mosquitto  (broker only; run the hub natively with `uv run hub serve`)
+#
+# Network exposure:
+#   * 8765 (hub HTTP) is published on 127.0.0.1 ONLY.
+#   * 1883 (MQTT) is published on all interfaces so LAN devices can reach it;
+#     every client must authenticate and the ACL confines devices to their own topics.
+#   * Nothing here is meant to face the internet. For remote access use Tailscale
+#     (see README "Remote access"); do not port-forward.
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./deploy/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./deploy/mosquitto/acl:/mosquitto/config/acl:ro
+      - ./deploy/mosquitto/passwd:/mosquitto/config/passwd:ro
+      - mosquitto-data:/mosquitto/data
+
+  hub:
+    build:
+      context: .
+      dockerfile: hub/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Inside the container the hub must listen on all interfaces; the port is
+      # still only published to the host's loopback below. Non-loopback binds
+      # require HUB_API_TOKEN (the hub refuses to start without it).
+      HUB_HOST: 0.0.0.0
+      HUB_MQTT_ENABLED: "true"
+      HUB_MQTT_HOST: mosquitto
+      # Ollama on the host. Note: Ollama listens on 127.0.0.1 by default, which a
+      # container cannot reach; either run the hub natively, or set
+      # OLLAMA_HOST=<docker bridge IP> for the Ollama service on the host.
+      OLLAMA_API_BASE: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - hub-data:/app/data
+    depends_on:
+      - mosquitto
+
+volumes:
+  mosquitto-data:
+  hub-data:

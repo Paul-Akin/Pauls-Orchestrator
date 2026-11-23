@@ -57,3 +57,6 @@ class Settings(BaseSettings):
     config_dir: Path = Field(default_factory=default_config_dir, validation_alias="HUB_CONFIG_DIR")
     host_override: str | None = Field(default=None, validation_alias="HUB_HOST")
     port_override: int | None = Field(default=None, validation_alias="HUB_PORT")
+    # Used by docker-compose, where the broker is "mosquitto", not 127.0.0.1.
+    mqtt_host_override: str | None = Field(default=None, validation_alias="HUB_MQTT_HOST")
+    mqtt_enabled_override: bool | None = Field(default=None, validation_alias="HUB_MQTT_ENABLED")

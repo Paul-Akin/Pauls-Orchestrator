@@ -85,7 +85,12 @@ def create_app(
     settings = settings or Settings()
     config = config or load_config(settings.config_dir)
     state = build_state(settings, config, registry=registry)
-    mqtt_on = config.hub.mqtt.enabled if enable_mqtt is None else enable_mqtt
+    if enable_mqtt is not None:
+        mqtt_on = enable_mqtt
+    elif settings.mqtt_enabled_override is not None:
+        mqtt_on = settings.mqtt_enabled_override
+    else:
+        mqtt_on = config.hub.mqtt.enabled
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

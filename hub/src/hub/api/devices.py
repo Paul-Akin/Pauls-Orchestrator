@@ -37,7 +37,10 @@ async def lifespan(app: FastAPI, state: HubState, *, mqtt_enabled: bool) -> Asyn
     bus = EventBus()
     bus.subscribe("*", log_event)
     known = [d.id for d in state.config.hub.devices]
-    mqtt = MqttTransport(state.config.hub.mqtt, state.settings, validator, bus, known)
+    mqtt_cfg = state.config.hub.mqtt
+    if state.settings.mqtt_host_override:
+        mqtt_cfg = mqtt_cfg.model_copy(update={"host": state.settings.mqtt_host_override})
+    mqtt = MqttTransport(mqtt_cfg, state.settings, validator, bus, known)
     app.state.validator = validator
     app.state.bus = bus
     app.state.mqtt = mqtt if mqtt_enabled else None
