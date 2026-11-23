@@ -4,10 +4,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from hub.paths import default_config_dir
-from hub.settings import Settings
 
 from hub.config import ConfigError, check_runtime, load_config, parse_config
+from hub.paths import default_config_dir
+from hub.settings import Settings
 
 
 def _settings(**kw: Any) -> Settings:

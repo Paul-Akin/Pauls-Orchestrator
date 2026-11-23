@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from hub.locality import ProviderName, is_ollama_cloud_model, is_private_endpoint, model_locality
 from hub.types import Locality
 

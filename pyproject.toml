@@ -33,8 +33,11 @@ target-version = "py312"
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "ASYNC", "S", "PT"]
 ignore = ["S101"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["hub"]
+
 [tool.ruff.lint.per-file-ignores]
-"hub/tests/**" = ["S", "B011"]
+"hub/tests/**" = ["S", "B011", "PT018", "E741"]
 "hub/src/hub/events/models.py" = ["ALL"]
 
 [tool.mypy]
@@ -49,6 +52,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["hub/tests"]
+pythonpath = ["hub"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = ["integration: hits a real provider; skipped unless its key/env is set"]
