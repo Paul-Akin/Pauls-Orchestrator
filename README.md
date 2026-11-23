@@ -133,7 +133,7 @@ first matching rule wins.
 | Key | Default | Notes |
 |---|---|---|
 | `server.host` / `server.port` | `127.0.0.1` / `8765` | Non-loopback requires `allow_lan: true` **and** `HUB_API_TOKEN` |
-| `server.allowed_hosts` | loopback names (or `*` with `allow_lan`) | Host-header allowlist against DNS rebinding |
+| `server.allowed_hosts` | loopback names (or `*` with `allow_lan`) | Host-header allowlist against DNS rebinding. `HUB_HOST` does **not** widen it (that is what keeps the Docker setup loopback-only); for LAN access set `allow_lan: true` or list your hostnames here |
 | `mqtt.enabled` / `host` / `port` / `client_id` | `false` / `127.0.0.1` / `1883` / `hub` | |
 | `usage_db` | `data/usage.sqlite3` | Relative to the repo root |
 | `log_level` / `log_format` | `INFO` / `console` | `json` for machine-readable logs |
