@@ -87,3 +87,27 @@ def registry(adapters: Mapping[ProviderName, object]) -> ProviderRegistry:
     full: dict[ProviderName, object] = {p: FakeAdapter(p) for p in ProviderName}
     full.update(adapters)
     return ProviderRegistry(full)  # type: ignore[arg-type]
+
+
+def chat_service(
+    routes_dict: dict[str, object],
+    adapters: Mapping[ProviderName, object] | None = None,
+    *,
+    usage_store: object | None = None,
+    context_builder: object | None = None,
+) -> object:
+    """Build a ChatService wired to fakes. Returns ``ChatService`` (typed loosely for tests)."""
+    from hub.config import parse_config
+    from hub.context.builder import PassThroughContextBuilder
+    from hub.pipeline import ChatService
+    from hub.routing.classifier import KeywordClassifier
+    from hub.routing.router import Router
+
+    routes = parse_config({}, routes_dict).routes
+    return ChatService(
+        routes=routes,
+        router=Router(routes, registry(adapters or {})),
+        classifier=KeywordClassifier(routes),
+        context_builder=context_builder or PassThroughContextBuilder(),  # type: ignore[arg-type]
+        usage_store=usage_store,  # type: ignore[arg-type]
+    )
