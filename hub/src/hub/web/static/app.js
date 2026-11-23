@@ -122,6 +122,19 @@ function renderMeta(box, meta) {
   if (meta.fell_back) row.append(el("span", "badge fallback", "fell back"));
   row.append(attemptsDetails(meta.attempts, meta.route_reason));
   box.append(row);
+  if (meta.memory_used?.length) box.append(memoryChips(meta.memory_used));
+}
+
+function memoryChips(refs) {
+  const row = el("div", "memory-used");
+  row.append(el("span", "muted", "memory used:"));
+  for (const m of refs) {
+    const label = m.heading ? `${m.title} › ${m.heading}` : m.title;
+    const chip = el("span", `chip mem ${m.sensitivity}`, label);
+    chip.title = `[${m.id}] ${m.sensitivity}, score ${m.score.toFixed(4)}`;
+    row.append(chip);
+  }
+  return row;
 }
 
 function attemptsDetails(attempts, reason) {
@@ -191,7 +204,12 @@ async function send() {
     const res = await api("/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: history, route: routeSel.value, stream: true }),
+      body: JSON.stringify({
+        messages: history,
+        route: routeSel.value,
+        stream: true,
+        use_memory: $("useMemory").checked,
+      }),
     });
     if (!res.ok) {
       const detail = await res.json().catch(() => ({}));
@@ -270,6 +288,45 @@ $("clear").addEventListener("click", () => {
   history = [];
   log.replaceChildren();
   input.focus();
+});
+
+// ---------------------------------------------------------------- memory
+
+const useMemory = $("useMemory");
+useMemory.checked = store.get("hubUseMemory") !== "0";
+useMemory.addEventListener("change", () => store.set("hubUseMemory", useMemory.checked ? "1" : "0"));
+
+$("rememberBtn").addEventListener("click", () => {
+  $("rememberText").value = input.value.trim();
+  $("rememberTitle").value = "";
+  $("rememberStatus").textContent = "";
+  $("rememberDialog").showModal();
+  $("rememberText").focus();
+});
+
+$("rememberSave").addEventListener("click", async (e) => {
+  e.preventDefault(); // keep the dialog open until the save succeeds
+  const text = $("rememberText").value.trim();
+  const status = $("rememberStatus");
+  if (!text) { status.textContent = "Nothing to save."; return; }
+  status.textContent = "Saving…";
+  try {
+    const res = await api("/memory", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        title: $("rememberTitle").value.trim() || null,
+        sensitivity: $("rememberSensitivity").value,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    status.textContent = `Saved as ${data.id}`;
+    setTimeout(() => $("rememberDialog").close(), 700);
+  } catch (err) {
+    status.textContent = `Not saved: ${err.message}`;
+  }
 });
 
 loadProviders();

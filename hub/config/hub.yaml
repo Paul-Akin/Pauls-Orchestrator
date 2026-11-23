@@ -23,3 +23,25 @@ devices:
   - id: phone-paul
     kind: android
     description: Tasker / Home Assistant webhooks
+
+# Stage 2 memory (docs/adr/0005). Notes are markdown files; the index is derived.
+memory:
+  enabled: true
+  dir: ~/hub-memory                    # source of truth: back this folder up
+  index_db: data/memory_index.sqlite3  # derived; `hub memory reindex` rebuilds it
+  watch: true                          # re-index when files change
+  embedding:
+    model: nomic-embed-text            # must be pulled in your LOCAL Ollama: ollama pull nomic-embed-text
+    timeout_s: 30
+  retrieval:
+    candidates: 20                     # hits per retriever (keyword, vector) before fusion
+    inject_max: 6                      # max chunks added to one prompt
+    rrf_k: 60                          # Reciprocal Rank Fusion constant (Cormack et al. 2009)
+    recency_half_life_days: 180
+    recency_floor: 0.7                 # old notes keep at least 70% of their score
+    min_cosine: 0.35                   # vector hits below this are ignored
+    token_budget: 1500                 # approx. tokens of memory per prompt (chars / 4)
+    chunk_max_chars: 1600
+  mcp:
+    enabled: true
+    max_sensitivity: personal          # public | personal. Private notes are never served over MCP.

@@ -174,3 +174,46 @@ def test_invalid_yaml(tmp_path: Path) -> None:
     (tmp_path / "routes.yaml").write_text("")
     with pytest.raises(ConfigError, match="invalid YAML"):
         load_config(tmp_path)
+
+
+# ------------------------------------------------------------------ memory
+
+
+def test_memory_defaults(routes_dict: dict[str, Any]) -> None:
+    mem = parse_config({}, routes_dict).hub.memory
+    assert mem.enabled
+    assert mem.mcp.max_sensitivity == "personal"
+    assert mem.embedding.model == "nomic-embed-text"
+
+
+def test_mcp_cannot_serve_private(routes_dict: dict[str, Any]) -> None:
+    with pytest.raises(ConfigError, match="max_sensitivity"):
+        parse_config({"memory": {"mcp": {"max_sensitivity": "private"}}}, routes_dict)
+
+
+def _without_private_route(routes_dict: dict[str, Any]) -> dict[str, Any]:
+    """Isolate the embedder check from the local_only-route endpoint check."""
+    del routes_dict["routes"]["private"]
+    rules = routes_dict["classifier"]["rules"]
+    routes_dict["classifier"]["rules"] = [r for r in rules if r["route"] != "private"]
+    return routes_dict
+
+
+@pytest.mark.parametrize(
+    ("model", "base"),
+    [
+        ("nomic-embed-text:cloud", "http://127.0.0.1:11434"),
+        ("nomic-embed-text", "https://ollama.com"),
+    ],
+)
+def test_embedder_must_be_local(routes_dict: dict[str, Any], model: str, base: str) -> None:
+    cfg = parse_config(
+        {"memory": {"embedding": {"model": model}}}, _without_private_route(routes_dict)
+    )
+    with pytest.raises(ConfigError, match="notes would leave the machine"):
+        check_runtime(cfg, _settings(OLLAMA_API_BASE=base))
+
+
+def test_embedder_check_skipped_when_memory_disabled(routes_dict: dict[str, Any]) -> None:
+    cfg = parse_config({"memory": {"enabled": False}}, _without_private_route(routes_dict))
+    check_runtime(cfg, _settings(OLLAMA_API_BASE="https://ollama.com"))

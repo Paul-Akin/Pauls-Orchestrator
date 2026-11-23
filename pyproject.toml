@@ -47,7 +47,7 @@ strict = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["litellm", "litellm.*", "aiomqtt", "aiomqtt.*"]
+module = ["litellm", "litellm.*", "aiomqtt", "aiomqtt.*", "sqlite_vec"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

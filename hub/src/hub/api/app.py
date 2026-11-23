@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -11,13 +13,25 @@ from pathlib import Path
 import structlog
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.types import ASGIApp
 
 from hub import __name__ as _pkg
 from hub.api import chat, devices, system
-from hub.config import AppConfig, check_runtime, load_config
+from hub.api import memory as memory_api  # aliased: create_app has a `memory` parameter
+from hub.api.auth import BearerTokenASGI
+from hub.config import AppConfig, MemoryConfig, check_runtime, load_config
 from hub.context.builder import ContextBuilder, PassThroughContextBuilder
-from hub.memory import MemoryProvider, NoOpMemoryProvider
+from hub.context.memory_builder import MemoryContextBuilder
+from hub.mcp_server import build_mcp_server
+from hub.memory.embedder import OllamaEmbedder
+from hub.memory.index import MemoryIndex
+from hub.memory.protocol import Sensitivity
+from hub.memory.retrieval import RetrievalParams
+from hub.memory.store import LocalMemoryProvider
+from hub.memory.watch import initial_reindex, watch_memory
 from hub.paths import repo_root
 from hub.pipeline import ChatService
 from hub.providers.registry import ProviderRegistry
@@ -37,12 +51,36 @@ class HubState:
     registry: ProviderRegistry
     service: ChatService
     usage: UsageStore
-    memory: MemoryProvider
+    memory: LocalMemoryProvider | None
+    """None when memory.enabled is false."""
     warnings: list[str] = field(default_factory=list)
 
 
 def _resolve(path: Path) -> Path:
     return path if path.is_absolute() else repo_root() / path
+
+
+def build_memory(settings: Settings, cfg: MemoryConfig) -> LocalMemoryProvider:
+    """The default memory stack: ~/hub-memory notes, SQLite index, local Ollama embedder."""
+    r = cfg.retrieval
+    return LocalMemoryProvider(
+        (settings.memory_dir_override or cfg.dir).expanduser(),
+        MemoryIndex(_resolve(cfg.index_db)),
+        OllamaEmbedder(
+            settings.ollama_api_base,
+            cfg.embedding.model,
+            timeout_s=cfg.embedding.timeout_s,
+            batch_size=cfg.embedding.batch_size,
+        ),
+        params=RetrievalParams(
+            rrf_k=r.rrf_k,
+            half_life_days=r.recency_half_life_days,
+            recency_floor=r.recency_floor,
+            min_cosine=r.min_cosine,
+        ),
+        candidates=r.candidates,
+        chunk_max_chars=r.chunk_max_chars,
+    )
 
 
 def build_state(
@@ -51,12 +89,18 @@ def build_state(
     *,
     registry: ProviderRegistry | None = None,
     context_builder: ContextBuilder | None = None,
-    memory: MemoryProvider | None = None,
+    memory: LocalMemoryProvider | None = None,
 ) -> HubState:
     warnings = check_runtime(config, settings)
     registry = registry or ProviderRegistry.from_settings(settings)
     usage = UsageStore(_resolve(config.hub.usage_db))
     routes = config.routes
+    mem_cfg = config.hub.memory
+    if mem_cfg.enabled:
+        memory = memory or build_memory(settings, mem_cfg)
+        context_builder = context_builder or MemoryContextBuilder(memory, mem_cfg.retrieval)
+    else:
+        memory = None
     service = ChatService(
         routes=routes,
         router=Router(routes, registry),
@@ -70,7 +114,7 @@ def build_state(
         registry=registry,
         service=service,
         usage=usage,
-        memory=memory or NoOpMemoryProvider(),
+        memory=memory,
         warnings=warnings,
     )
 
@@ -81,16 +125,19 @@ def create_app(
     *,
     registry: ProviderRegistry | None = None,
     enable_mqtt: bool | None = None,
+    memory: LocalMemoryProvider | None = None,
 ) -> FastAPI:
     settings = settings or Settings()
     config = config or load_config(settings.config_dir)
-    state = build_state(settings, config, registry=registry)
+    state = build_state(settings, config, registry=registry, memory=memory)
     if enable_mqtt is not None:
         mqtt_on = enable_mqtt
     elif settings.mqtt_enabled_override is not None:
         mqtt_on = settings.mqtt_enabled_override
     else:
         mqtt_on = config.hub.mqtt.enabled
+
+    mcp_server, mcp_asgi = _build_mcp(state)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -103,9 +150,27 @@ def create_app(
             version=VERSION,
             providers={p.value: a.available for p, a in avail.items()},
             usage_db=str(state.usage.path),
+            memory_dir=str(state.memory.root) if state.memory else None,
         )
-        async with devices.lifespan(app, state, mqtt_enabled=mqtt_on):
-            yield
+        tasks: list[asyncio.Task[None]] = []
+        if state.memory is not None:
+            # In the background: embedding many notes must not delay startup.
+            tasks.append(asyncio.create_task(initial_reindex(state.memory), name="mem-index"))
+            if config.hub.memory.watch:
+                tasks.append(asyncio.create_task(watch_memory(state.memory), name="mem-watch"))
+        try:
+            async with contextlib.AsyncExitStack() as stack:
+                if mcp_server is not None:
+                    # A mounted sub-app's lifespan never runs, so start MCP sessions here.
+                    await stack.enter_async_context(mcp_server.session_manager.run())
+                await stack.enter_async_context(devices.lifespan(app, state, mqtt_enabled=mqtt_on))
+                yield
+        finally:
+            for t in tasks:
+                t.cancel()
+            for t in tasks:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await t
         log.info("hub_stopped")
 
     app = FastAPI(
@@ -116,15 +181,37 @@ def create_app(
         redoc_url=None,
     )
     app.state.hub = state
+    if mcp_asgi is not None:
+        app.mount("/mcp", mcp_asgi, name="mcp")  # before the "/" static catch-all
     app.add_middleware(
         TrustedHostMiddleware, allowed_hosts=config.hub.server.effective_allowed_hosts()
     )
     app.include_router(system.router)
     app.include_router(chat.router)
     app.include_router(devices.router)
+    app.include_router(memory_api.router)
     static_dir = Path(str(files(_pkg).joinpath("web/static")))
     app.mount("/", StaticFiles(directory=static_dir, html=True), name="web")
     return app
+
+
+def _build_mcp(state: HubState) -> tuple[MCPServer | None, ASGIApp | None]:
+    """The read-only memory MCP server, mounted at /mcp/ (docs/adr/0006)."""
+    mcp_cfg = state.config.hub.memory.mcp
+    if state.memory is None or not mcp_cfg.enabled:
+        return None, None
+    cap = Sensitivity.parse(mcp_cfg.max_sensitivity)
+    assert cap is not None
+    server = build_mcp_server(state.memory, max_sensitivity=cap, version=VERSION)
+    hosts = state.config.hub.server.effective_allowed_hosts()
+    security = TransportSecuritySettings(
+        # The hub's TrustedHostMiddleware already checks Host; the SDK's check adds an
+        # Origin check that stops browser pages from driving the endpoint.
+        enable_dns_rebinding_protection="*" not in hosts,
+        allowed_hosts=[f"{h}:*" for h in hosts] + hosts,
+    )
+    asgi = server.streamable_http_app(streamable_http_path="/", transport_security=security)
+    return server, BearerTokenASGI(asgi, state.settings)
 
 
 def app_factory() -> FastAPI:

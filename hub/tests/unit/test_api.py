@@ -14,8 +14,10 @@ from starlette.websockets import WebSocketDisconnect
 from hub.api.app import create_app
 from hub.config import parse_config
 from hub.locality import ProviderName
+from hub.memory.index import MemoryIndex
+from hub.memory.store import LocalMemoryProvider
 from hub.settings import Settings
-from tests.fakes import FakeAdapter, registry
+from tests.fakes import FakeAdapter, FakeEmbedder, registry
 
 BASE = "http://127.0.0.1"
 DEVICE_TOKEN = "dev-token-123"
@@ -32,16 +34,25 @@ def make_client(
     hub_cfg = {
         "usage_db": str(tmp_path / "usage.sqlite3"),
         "devices": [{"id": "phone-paul", "kind": "android"}],
+        "memory": {
+            "dir": str(tmp_path / "mem"),
+            "index_db": str(tmp_path / "mem-index.sqlite3"),
+            "watch": False,
+        },
         **(hub or {}),
     }
     settings = Settings.model_validate(
         {"HUB_DEVICE_TOKENS": {"phone-paul": DEVICE_TOKEN}, **(env or {})}
+    )
+    memory = LocalMemoryProvider(
+        tmp_path / "mem", MemoryIndex(tmp_path / "mem-index.sqlite3"), FakeEmbedder()
     )
     app = create_app(
         settings,
         parse_config(hub_cfg, routes_dict),
         registry=registry(adapters or {}),
         enable_mqtt=False,
+        memory=memory,
     )
     return TestClient(app, base_url=BASE)
 

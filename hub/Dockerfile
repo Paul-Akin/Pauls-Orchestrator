@@ -23,7 +23,14 @@ COPY protocol protocol
 COPY hub hub
 RUN uv sync --frozen --no-dev
 
-RUN useradd --system --uid 10001 hub && mkdir -p /app/data && chown hub /app/data
+# Run as the uid that owns ~/hub-memory on the host, so notes saved from the
+# container are writable (bind mounts keep host ownership). 1000 is the first
+# user on most Linux installs (incl. Raspberry Pi OS); set HUB_UID if yours differs.
+ARG HUB_UID=1000
+ARG HUB_GID=1000
+RUN groupadd --gid "${HUB_GID}" hub \
+    && useradd --uid "${HUB_UID}" --gid "${HUB_GID}" --no-create-home --shell /usr/sbin/nologin hub \
+    && mkdir -p /app/data && chown hub:hub /app/data
 USER hub
 
 EXPOSE 8765

@@ -103,7 +103,10 @@ class ChatService:
 
         model_req = await self._context_builder.build(
             ModelRequest(
-                messages=req.messages, max_tokens=req.max_tokens, temperature=req.temperature
+                messages=req.messages,
+                max_tokens=req.max_tokens,
+                temperature=req.temperature,
+                use_memory=req.use_memory,
             ),
             ctx,
         )
@@ -117,7 +120,7 @@ class ChatService:
                 case RouterDelta(text=text):
                     yield DeltaEvent(text=text)
                 case RouterCompleted():
-                    meta = self._metadata(ctx, event, started)
+                    meta = self._metadata(ctx, event, started, model_req)
                     log_ctx.info(
                         "chat_completed",
                         model_alias=meta.model_alias,
@@ -131,6 +134,7 @@ class ChatService:
                         cost_usd=meta.cost.usd,
                         cost_status=meta.cost.status.value,
                         latency_ms=meta.latency_ms,
+                        memory_chunks=len(meta.memory_used),
                     )
                     await self._record_ok(meta, source)
                     yield DoneEvent(metadata=meta)
@@ -162,7 +166,9 @@ class ChatService:
                 raise ChatFailedError(event)
         raise RuntimeError("stream ended without a terminal event")  # pragma: no cover
 
-    def _metadata(self, ctx: RequestContext, done: RouterCompleted, started: float) -> ChatMetadata:
+    def _metadata(
+        self, ctx: RequestContext, done: RouterCompleted, started: float, model_req: ModelRequest
+    ) -> ChatMetadata:
         spec = done.spec
         return ChatMetadata(
             request_id=ctx.request_id,
@@ -177,6 +183,7 @@ class ChatService:
             fell_back=len(done.attempts) > 1,
             attempts=done.attempts,
             latency_ms=int((self._clock() - started) * 1000),
+            memory_used=model_req.memory_used,
         )
 
     async def _record_ok(self, meta: ChatMetadata, source: str) -> None:

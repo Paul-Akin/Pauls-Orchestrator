@@ -1,6 +1,6 @@
 # ADR 0002: The hub owns memory; vendors never share it
 
-* Status: accepted (interfaces only in stage 1; implementation in stage 2)
+* Status: accepted; implemented in stage 2 (see ADR 0005 and ADR 0006)
 * Date: 2026-11-23
 
 ## Context

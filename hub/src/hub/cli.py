@@ -220,6 +220,145 @@ def providers() -> None:
         typer.secho(f"warning: {w}", fg=typer.colors.YELLOW, err=True)
 
 
+# ---------------------------------------------------------------------- memory
+
+memory_app = typer.Typer(no_args_is_help=True, help="Search and maintain the memory store.")
+app.add_typer(memory_app, name="memory")
+
+SENSITIVITIES = ("public", "personal", "private")
+
+
+def _request(method: str, path: str, **kwargs: Any) -> Any:
+    settings, cfg = _load()
+    url = _base_url(settings, cfg)
+    try:
+        r = httpx.request(method, f"{url}{path}", headers=_headers(settings), timeout=120, **kwargs)
+    except httpx.ConnectError:
+        raise _not_running(url) from None
+    if r.status_code >= 400:
+        detail = r.json().get("detail", r.text) if r.content else r.status_code
+        typer.secho(f"error: {detail}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+    return r.json()
+
+
+def _check_sensitivity(value: str) -> str:
+    if value not in SENSITIVITIES:
+        raise typer.BadParameter(f"choose one of: {', '.join(SENSITIVITIES)}")
+    return value
+
+
+@app.command()
+def remember(
+    text: Annotated[str, typer.Argument(help="What to remember. Use '-' to read stdin.")],
+    title: Annotated[str | None, typer.Option(help="Title (default: first line)")] = None,
+    sensitivity: Annotated[
+        str,
+        typer.Option(
+            "--sensitivity",
+            "-s",
+            callback=_check_sensitivity,
+            help="public | personal | private (private: only ever shown to local models)",
+        ),
+    ] = "personal",
+    tag: Annotated[list[str] | None, typer.Option("--tag", "-t", help="Repeatable")] = None,
+) -> None:
+    """Save a note to ~/hub-memory (via the running hub)."""
+    body = sys.stdin.read() if text == "-" else text
+    data = _request(
+        "POST",
+        "/memory",
+        json={"text": body, "title": title, "sensitivity": sensitivity, "tags": tag or []},
+    )
+    typer.echo(f"saved {data['id']} ({data['sensitivity']})")
+
+
+@memory_app.command("search")
+def memory_search(
+    query: str,
+    k: Annotated[int, typer.Option(help="Number of results")] = 5,
+    max_sensitivity: Annotated[
+        str, typer.Option(callback=_check_sensitivity, help="Most sensitive level to include")
+    ] = "private",
+) -> None:
+    """Hybrid (keyword + vector) search, best first."""
+    data = _request(
+        "GET", "/memory/search", params={"q": query, "k": k, "max_sensitivity": max_sensitivity}
+    )
+    if not data["results"]:
+        typer.echo("no matches")
+    for r in data["results"]:
+        where = f"{r['title']} > {r['heading']}" if r["heading"] else r["title"]
+        typer.secho(f"[{r['id']}] {where}  ({r['sensitivity']}, score {r['score']:.4f})", bold=True)
+        snippet = " ".join(r["text"].split())
+        typer.echo(f"  {snippet[:240]}{'…' if len(snippet) > 240 else ''}")
+
+
+@memory_app.command("recent")
+def memory_recent(limit: int = 20) -> None:
+    """Most recently created notes."""
+    for n in _request("GET", "/memory/recent", params={"limit": limit})["notes"]:
+        typer.echo(f"{n['created'][:10]}  [{n['id']}] {n['title']}")
+
+
+@memory_app.command("reindex")
+def memory_reindex() -> None:
+    """Re-scan ~/hub-memory and embed anything new (normally automatic)."""
+    r = _request("POST", "/memory/reindex", json={})
+    typer.echo(
+        f"added {r['added']}, updated {r['updated']}, removed {r['removed']}, "
+        f"embedded {r['embedded']}, still pending {r['pending_embedding']}"
+    )
+    if r["embed_error"]:
+        typer.secho(
+            f"embedding unavailable ({r['embed_error']}); search is keyword-only until it works",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+    for w in r["warnings"]:
+        typer.secho(f"warning: {w}", fg=typer.colors.YELLOW, err=True)
+
+
+@memory_app.command("stats")
+def memory_stats() -> None:
+    """Index statistics."""
+    for key, value in _request("GET", "/memory/stats").items():
+        typer.echo(f"{key:<26} {value}")
+
+
+@app.command()
+def mcp() -> None:
+    """Serve the memory store over MCP stdio (for Claude Desktop / Claude Code on this PC).
+
+    Read-only, capped at memory.mcp.max_sensitivity (never private). Logs go to
+    stderr; stdout carries the MCP protocol. The index is kept fresh by the
+    running hub (`hub serve`); this process only reads it.
+    """
+    import asyncio
+
+    from hub.api.app import build_memory
+    from hub.config import ConfigError, check_runtime
+    from hub.log import configure_logging
+    from hub.mcp_server import build_mcp_server
+    from hub.memory.protocol import Sensitivity
+
+    settings, cfg = _load()
+    try:
+        check_runtime(cfg, settings)
+    except ConfigError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(2) from None
+    mem_cfg = cfg.hub.memory
+    if not mem_cfg.enabled or not mem_cfg.mcp.enabled:
+        typer.secho("memory or memory.mcp is disabled in hub.yaml", fg=typer.colors.RED, err=True)
+        raise typer.Exit(2)
+    configure_logging(cfg.hub.log_level, cfg.hub.log_format)  # stderr only
+    cap = Sensitivity.parse(mem_cfg.mcp.max_sensitivity)
+    assert cap is not None
+    server = build_mcp_server(build_memory(settings, mem_cfg), max_sensitivity=cap)
+    asyncio.run(server.run_stdio_async())
+
+
 def main() -> None:
     app()
 

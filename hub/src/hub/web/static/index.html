@@ -32,10 +32,36 @@
         <input type="file" id="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
         <span aria-hidden="true">＋ image</span>
       </label>
+      <label class="toggle" title="Look up relevant notes in ~/hub-memory before answering">
+        <input type="checkbox" id="useMemory" checked>
+        <span>memory</span>
+      </label>
+      <button type="button" id="rememberBtn" class="ghost" title="Save a note to memory">Remember</button>
       <button type="button" id="clear" class="ghost">New chat</button>
       <button type="submit" id="send">Send</button>
     </div>
   </form>
+
+  <dialog id="rememberDialog">
+    <form method="dialog" class="remember">
+      <h3>Remember</h3>
+      <input id="rememberTitle" placeholder="Title (optional: defaults to the first line)" maxlength="200">
+      <textarea id="rememberText" rows="6" placeholder="What should the hub remember?" maxlength="100000"></textarea>
+      <label class="route">
+        <span>Sensitivity</span>
+        <select id="rememberSensitivity">
+          <option value="public">public: fine to send anywhere</option>
+          <option value="personal" selected>personal: cloud models you chose may see it</option>
+          <option value="private">private: only ever shown to local models</option>
+        </select>
+      </label>
+      <p class="muted" id="rememberStatus" role="status"></p>
+      <menu>
+        <button value="cancel" formnovalidate class="ghost">Cancel</button>
+        <button value="save" id="rememberSave">Save</button>
+      </menu>
+    </form>
+  </dialog>
 
   <dialog id="tokenDialog">
     <form method="dialog">

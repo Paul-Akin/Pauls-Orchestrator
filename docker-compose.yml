@@ -2,6 +2,7 @@
 #
 #   1. cp .env.example .env   and fill in keys, HUB_API_TOKEN, HUB_MQTT_PASSWORD, HUB_DEVICE_TOKENS
 #   2. uv run python deploy/mosquitto/make_passwd.py
+#      mkdir -p ~/hub-memory      (create it yourself: if Docker creates it, root owns it)
 #   3. docker compose up -d            (broker + hub)
 #      docker compose up -d mosquitto  (broker only; run the hub natively with `uv run hub serve`)
 #
@@ -28,6 +29,10 @@ services:
     build:
       context: .
       dockerfile: hub/Dockerfile
+      args:
+        # Must match the owner of ~/hub-memory (run `id -u` / `id -g` on the host).
+        HUB_UID: ${HUB_UID:-1000}
+        HUB_GID: ${HUB_GID:-1000}
     restart: unless-stopped
     env_file:
       - path: .env
@@ -43,12 +48,15 @@ services:
       # container cannot reach; either run the hub natively, or set
       # OLLAMA_HOST=<docker bridge IP> for the Ollama service on the host.
       OLLAMA_API_BASE: http://host.docker.internal:11434
+      # Your notes (source of truth) from the host; the index lives in hub-data.
+      HUB_MEMORY_DIR: /memory
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:8765:8765"
     volumes:
       - hub-data:/app/data
+      - ${HOME}/hub-memory:/memory
     depends_on:
       - mosquitto
 

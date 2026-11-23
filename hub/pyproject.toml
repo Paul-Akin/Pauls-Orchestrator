@@ -18,6 +18,11 @@ dependencies = [
     "jsonschema>=4.23",
     # Makes jsonschema actually check format: date-time (otherwise silently skipped).
     "rfc3339-validator>=0.1.4",
+    # Stage 2 memory: vector search inside SQLite (wheels for win/linux x86_64+aarch64/mac).
+    "sqlite-vec==0.1.9",
+    # MCP SDK 2.x (FastMCP was renamed MCPServer). Pinned: the API moved between majors.
+    "mcp==2.3.0",
+    "watchfiles>=1.0",
 ]
 
 [project.scripts]
