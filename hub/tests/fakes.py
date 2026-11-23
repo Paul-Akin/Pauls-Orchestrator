@@ -61,10 +61,16 @@ class FakeAdapter:
 
 class CloudTripwire:
     """A cloud adapter that fails the test if the router so much as asks it anything
-    beyond its locality."""
+    beyond its locality.
 
-    def __init__(self, provider: ProviderName) -> None:
+    ``allow_status=True`` permits ``availability()`` (the app's startup/status
+    probe, which for real cloud adapters is a local key check with no network);
+    ``stream()`` always trips.
+    """
+
+    def __init__(self, provider: ProviderName, *, allow_status: bool = False) -> None:
         self.provider = provider
+        self.allow_status = allow_status
         self.touched = 0
 
     @property
@@ -75,6 +81,8 @@ class CloudTripwire:
         return model_locality(self.provider, spec.model, None)
 
     async def availability(self) -> Availability:
+        if self.allow_status:
+            return Availability(True, "tripwire (status allowed)")
         self.touched += 1
         raise AssertionError(f"{self.provider} availability() called on a local-only path")
 
