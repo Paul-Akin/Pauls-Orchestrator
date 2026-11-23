@@ -39,6 +39,7 @@ def write(root: Path, rel: str, text: str) -> Path:
         ("public/note.md", "sensitivity: private", PR),
         ("projects/note.md", None, PR),  # unknown folder: fail closed
         ("note.md", "title: [unclosed", PR),  # broken YAML: fail closed
+        ("public/note.md", "title: [unclosed", PR),  # ...even inside public/
     ],
 )
 def test_sensitivity_resolution(

@@ -119,3 +119,41 @@ def chat_service(
         context_builder=context_builder or PassThroughContextBuilder(),  # type: ignore[arg-type]
         usage_store=usage_store,  # type: ignore[arg-type]
     )
+
+
+class FakeEmbedder:
+    """Deterministic bag-of-words embedder: shared words => higher cosine. No network."""
+
+    def __init__(self, dim: int = 64, *, model: str = "fake-embed", fail: bool = False) -> None:
+        self.dim = dim
+        self._model = model
+        self.fail = fail
+        self.calls: list[list[str]] = []
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    def locality(self) -> Locality:
+        return Locality.LOCAL
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        import hashlib
+        import math
+        import re
+
+        from hub.memory.embedder import EmbedderError
+
+        self.calls.append(list(texts))
+        if self.fail:
+            raise EmbedderError("fake embedder down")
+        out = []
+        for text in texts:
+            vec = [0.0] * self.dim
+            for word in re.findall(r"[a-z0-9]+", text.lower()):
+                stem = word.rstrip("s")
+                h = int(hashlib.md5(stem.encode(), usedforsecurity=False).hexdigest(), 16)
+                vec[h % self.dim] += 1.0
+            norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+            out.append([x / norm for x in vec])
+        return out

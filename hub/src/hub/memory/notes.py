@@ -134,11 +134,18 @@ def _parse_datetime(value: object) -> datetime | None:
 
 
 def resolve_sensitivity(
-    front: dict[str, Any] | None, rel_parts: tuple[str, ...]
+    front: dict[str, Any] | None, rel_parts: tuple[str, ...], *, front_unreadable: bool = False
 ) -> tuple[Sensitivity, list[str]]:
-    """Most restrictive of front matter and top-level folder; PRIVATE if neither."""
+    """Most restrictive of front matter and top-level folder; PRIVATE if neither.
+
+    Unreadable front matter forces PRIVATE even inside ``public/``: the broken
+    block may well have been a mistyped ``sensitivity: private``.
+    """
     warnings: list[str] = []
     candidates: list[Sensitivity] = []
+    if front_unreadable:
+        warnings.append("unreadable front matter; treated as private")
+        candidates.append(Sensitivity.PRIVATE)
     if front is not None and "sensitivity" in front:
         parsed = Sensitivity.parse(front["sensitivity"])
         if parsed is None:
@@ -167,7 +174,9 @@ def parse_note(root: Path, path: Path, raw: bytes) -> Note:
     front, body, error = _split_front_matter(text)
     warnings = [error] if error else []
     rel_parts = path.resolve().relative_to(root.resolve()).parts
-    sensitivity, sens_warn = resolve_sensitivity(front, rel_parts)
+    sensitivity, sens_warn = resolve_sensitivity(
+        front, rel_parts, front_unreadable=error is not None
+    )
     warnings += sens_warn
     fm = front or {}
 
