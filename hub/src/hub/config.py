@@ -174,6 +174,9 @@ class ServerConfig(_Strict):
     port: Annotated[int, Field(gt=0, lt=65536)] = 8765
     allow_lan: bool = False
     """Must be true to bind to anything other than loopback. Also requires HUB_API_TOKEN."""
+    allowed_hosts: list[str] | None = None
+    """Accepted HTTP Host headers (DNS-rebinding defence). Default: loopback names,
+    or any host when ``allow_lan`` is true."""
 
     @model_validator(mode="after")
     def _lan_opt_in(self) -> ServerConfig:
@@ -186,6 +189,13 @@ class ServerConfig(_Strict):
     @property
     def is_loopback(self) -> bool:
         return _is_loopback_host(self.host)
+
+    def effective_allowed_hosts(self) -> list[str]:
+        if self.allowed_hosts is not None:
+            return self.allowed_hosts
+        if self.allow_lan:
+            return ["*"]
+        return ["127.0.0.1", "localhost", "[::1]", "::1"]
 
 
 class MqttConfig(_Strict):
