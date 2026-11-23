@@ -26,17 +26,41 @@ class Sensitivity(IntEnum):
     PRIVATE = 2
     """Must never leave this machine (only injected into local-model prompts)."""
 
+    @classmethod
+    def parse(cls, value: object) -> Sensitivity | None:
+        """'private' / 'PRIVATE' / 2 -> Sensitivity; anything unrecognized -> None."""
+        if isinstance(value, Sensitivity):
+            return value
+        if isinstance(value, str):
+            return cls.__members__.get(value.strip().upper())
+        if isinstance(value, int) and not isinstance(value, bool):
+            try:
+                return cls(value)
+            except ValueError:
+                return None
+        return None
+
+    @property
+    def label(self) -> str:
+        return self.name.lower()
+
 
 @dataclass(frozen=True)
 class MemoryItem:
+    """A note (from :meth:`MemoryProvider.get`) or one chunk of it (from ``search``)."""
+
     id: str
+    """Note id: its path under the memory dir, POSIX style, without '.md'."""
     text: str
     source: str
     created_at: datetime
     sensitivity: Sensitivity
     tags: tuple[str, ...] = ()
     score: float | None = None
-    """Similarity score when returned from :meth:`MemoryProvider.search`."""
+    """Fused retrieval score when returned from :meth:`MemoryProvider.search`."""
+    title: str = ""
+    heading: str = ""
+    """Section heading path of the chunk (search results only), e.g. 'Bolts > Preload'."""
 
 
 @dataclass(frozen=True)
@@ -45,6 +69,7 @@ class NewMemoryItem:
     source: str
     sensitivity: Sensitivity = Sensitivity.PERSONAL
     tags: tuple[str, ...] = field(default_factory=tuple)
+    title: str | None = None
 
 
 @runtime_checkable

@@ -60,3 +60,5 @@ class Settings(BaseSettings):
     # Used by docker-compose, where the broker is "mosquitto", not 127.0.0.1.
     mqtt_host_override: str | None = Field(default=None, validation_alias="HUB_MQTT_HOST")
     mqtt_enabled_override: bool | None = Field(default=None, validation_alias="HUB_MQTT_ENABLED")
+    # Used by docker-compose, where the host's ~/hub-memory is mounted at /memory.
+    memory_dir_override: Path | None = Field(default=None, validation_alias="HUB_MEMORY_DIR")

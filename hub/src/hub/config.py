@@ -15,7 +15,7 @@ from typing import Annotated, Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from hub.locality import ProviderName, is_private_endpoint, static_locality
+from hub.locality import ProviderName, is_private_endpoint, model_locality, static_locality
 from hub.settings import Settings
 from hub.types import Locality
 
@@ -212,9 +212,52 @@ class DeviceConfig(_Strict):
     description: str = ""
 
 
+class EmbeddingConfig(_Strict):
+    """Embeddings always run on the local Ollama (OLLAMA_API_BASE): see docs/adr/0005."""
+
+    model: Annotated[str, Field(min_length=1)] = "nomic-embed-text"
+    timeout_s: Annotated[float, Field(gt=0)] = 30.0
+    batch_size: Annotated[int, Field(gt=0, le=256)] = 32
+
+
+class RetrievalConfig(_Strict):
+    """Hybrid retrieval knobs. Formulas: hub/memory/retrieval.py and docs/adr/0005."""
+
+    candidates: Annotated[int, Field(gt=0, le=200)] = 20
+    """Hits taken from EACH retriever (keyword, vector) before fusion."""
+    inject_max: Annotated[int, Field(gt=0, le=50)] = 6
+    """Max chunks injected into one prompt."""
+    rrf_k: Annotated[int, Field(gt=0)] = 60
+    recency_half_life_days: Annotated[float, Field(gt=0)] = 180.0
+    recency_floor: Annotated[float, Field(ge=0, le=1)] = 0.7
+    min_cosine: Annotated[float, Field(ge=-1, le=1)] = 0.35
+    token_budget: Annotated[int, Field(gt=0)] = 1500
+    chunk_max_chars: Annotated[int, Field(ge=200)] = 1600
+
+
+class McpConfig(_Strict):
+    enabled: bool = True
+    max_sensitivity: Literal["public", "personal"] = "personal"
+    """Most sensitive memory MCP clients may read. 'private' is deliberately not allowed."""
+
+
+class MemoryConfig(_Strict):
+    enabled: bool = True
+    dir: Path = Path("~/hub-memory")
+    """Markdown notes: the source of truth. Keep it out of the repo; back it up."""
+    index_db: Path = Path("data/memory_index.sqlite3")
+    """Derived search index; safe to delete (rebuilt by reindex)."""
+    watch: bool = True
+    """Re-index automatically when files in ``dir`` change."""
+    embedding: EmbeddingConfig = EmbeddingConfig()
+    retrieval: RetrievalConfig = RetrievalConfig()
+    mcp: McpConfig = McpConfig()
+
+
 class HubConfig(_Strict):
     server: ServerConfig = ServerConfig()
     mqtt: MqttConfig = MqttConfig()
+    memory: MemoryConfig = MemoryConfig()
     usage_db: Path = Path("data/usage.sqlite3")
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_format: Literal["console", "json"] = "console"
@@ -280,6 +323,15 @@ def check_runtime(cfg: AppConfig, settings: Settings) -> list[str]:
             f"OLLAMA_API_BASE={settings.ollama_api_base!r} is not a loopback/private address, "
             f"so local_only routes {local_routes} could leave the network"
         )
+    mem = cfg.hub.memory
+    if mem.enabled:
+        # Embedding a note sends its full text to the model, so it must be local.
+        loc = model_locality(ProviderName.OLLAMA, mem.embedding.model, settings.ollama_api_base)
+        if loc is not Locality.LOCAL:
+            raise ConfigError(
+                f"memory.embedding.model={mem.embedding.model!r} at OLLAMA_API_BASE="
+                f"{settings.ollama_api_base!r} is not local; notes would leave the machine"
+            )
     for device in cfg.hub.devices:
         if device.id not in settings.device_tokens:
             warnings.append(
