@@ -39,3 +39,13 @@ BASE_ROUTES: dict[str, Any] = {
 @pytest.fixture
 def routes_dict() -> dict[str, Any]:
     return copy.deepcopy(BASE_ROUTES)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Point ~ at a temp dir for every test, so nothing can touch the real ~/hub-memory."""
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))  # Windows expanduser

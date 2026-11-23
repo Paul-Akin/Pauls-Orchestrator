@@ -27,6 +27,8 @@ class FakeAdapter:
     reply: str = "answer from {model}"
     api_base: str | None = "http://127.0.0.1:11434"
     calls: list[str] = field(default_factory=list)
+    requests: list[ModelRequest] = field(default_factory=list)
+    """Every request this adapter received (to assert what a model was shown)."""
 
     @property
     def name(self) -> ProviderName:
@@ -42,6 +44,7 @@ class FakeAdapter:
 
     async def stream(self, spec: ModelSpec, req: ModelRequest) -> AsyncIterator[ModelChunk]:
         self.calls.append(spec.alias)
+        self.requests.append(req)
         if self.behavior == "error":
             raise ProviderError(self.error_kind, "fake failure")
         if self.behavior == "crash":

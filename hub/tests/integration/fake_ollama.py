@@ -1,4 +1,4 @@
-"""Minimal stand-in for the Ollama HTTP API (``/api/tags``, ``/api/chat``).
+"""Minimal stand-in for the Ollama HTTP API (``/api/tags``, ``/api/chat``, ``/api/embed``).
 
 Speaks Ollama's real wire format (NDJSON streaming with ``prompt_eval_count`` /
 ``eval_count`` in the final line), so the *real* LiteLLM ``ollama_chat/`` code
@@ -45,7 +45,12 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(length) or b"{}")
-        _Handler.requests_seen.append(body)
+        _Handler.requests_seen.append({"_path": self.path, **body})
+        if self.path == "/api/embed":
+            inputs = body.get("input", [])
+            inputs = [inputs] if isinstance(inputs, str) else inputs
+            self._json(200, {"model": body.get("model"), "embeddings": [_embed(t) for t in inputs]})
+            return
         if self.path != "/api/chat":
             self._json(404, {"error": "not found"})
             return
@@ -85,6 +90,20 @@ class _Handler(BaseHTTPRequestHandler):
         }
 
 
+def _embed(text: str, dim: int = 32) -> list[float]:
+    """Deterministic bag-of-words vector: shared words => higher cosine."""
+    import hashlib
+    import math
+    import re
+
+    vec = [0.0] * dim
+    for word in re.findall(r"[a-z0-9]+", text.lower()):
+        h = int(hashlib.md5(word.rstrip("s").encode(), usedforsecurity=False).hexdigest(), 16)
+        vec[h % dim] += 1.0
+    norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+    return [x / norm for x in vec]
+
+
 class FakeOllama:
     def __init__(self, port: int = 0) -> None:
         self.server = ThreadingHTTPServer(("127.0.0.1", port), _Handler)
@@ -98,6 +117,9 @@ class FakeOllama:
     @property
     def requests(self) -> list[dict[str, Any]]:
         return _Handler.requests_seen
+
+    def requests_to(self, path: str) -> list[dict[str, Any]]:
+        return [r for r in _Handler.requests_seen if r["_path"] == path]
 
     def __enter__(self) -> FakeOllama:
         _Handler.requests_seen = []

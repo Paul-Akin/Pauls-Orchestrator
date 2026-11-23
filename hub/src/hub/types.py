@@ -65,10 +65,22 @@ class ChatRequest(BaseModel):
     stream: bool = False
     max_tokens: Annotated[int, Field(gt=0)] | None = None
     temperature: Annotated[float, Field(ge=0.0, le=2.0)] | None = None
+    use_memory: bool = True
+    """Set false to answer without consulting the memory store."""
 
     @property
     def has_images(self) -> bool:
         return any(m.images for m in self.messages)
+
+
+class MemoryRef(BaseModel):
+    """A memory chunk that was injected into the prompt (shown to the user)."""
+
+    id: str
+    title: str
+    heading: str
+    sensitivity: str
+    score: float
 
 
 class ModelRequest(BaseModel):
@@ -77,6 +89,9 @@ class ModelRequest(BaseModel):
     messages: list[Message]
     max_tokens: int | None = None
     temperature: float | None = None
+    use_memory: bool = True
+    memory_used: list[MemoryRef] = Field(default_factory=list)
+    """Filled by the ContextBuilder; reported in ChatMetadata, never sent as such."""
 
     @property
     def has_images(self) -> bool:
@@ -130,6 +145,7 @@ class ChatMetadata(BaseModel):
     fell_back: bool
     attempts: list[AttemptRecord]
     latency_ms: int
+    memory_used: list[MemoryRef] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):

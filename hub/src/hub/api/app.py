@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -15,9 +17,14 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from hub import __name__ as _pkg
 from hub.api import chat, devices, system
-from hub.config import AppConfig, check_runtime, load_config
+from hub.config import AppConfig, MemoryConfig, check_runtime, load_config
 from hub.context.builder import ContextBuilder, PassThroughContextBuilder
-from hub.memory import MemoryProvider, NoOpMemoryProvider
+from hub.context.memory_builder import MemoryContextBuilder
+from hub.memory.embedder import OllamaEmbedder
+from hub.memory.index import MemoryIndex
+from hub.memory.retrieval import RetrievalParams
+from hub.memory.store import LocalMemoryProvider
+from hub.memory.watch import initial_reindex, watch_memory
 from hub.paths import repo_root
 from hub.pipeline import ChatService
 from hub.providers.registry import ProviderRegistry
@@ -37,12 +44,36 @@ class HubState:
     registry: ProviderRegistry
     service: ChatService
     usage: UsageStore
-    memory: MemoryProvider
+    memory: LocalMemoryProvider | None
+    """None when memory.enabled is false."""
     warnings: list[str] = field(default_factory=list)
 
 
 def _resolve(path: Path) -> Path:
     return path if path.is_absolute() else repo_root() / path
+
+
+def build_memory(settings: Settings, cfg: MemoryConfig) -> LocalMemoryProvider:
+    """The default memory stack: ~/hub-memory notes, SQLite index, local Ollama embedder."""
+    r = cfg.retrieval
+    return LocalMemoryProvider(
+        (settings.memory_dir_override or cfg.dir).expanduser(),
+        MemoryIndex(_resolve(cfg.index_db)),
+        OllamaEmbedder(
+            settings.ollama_api_base,
+            cfg.embedding.model,
+            timeout_s=cfg.embedding.timeout_s,
+            batch_size=cfg.embedding.batch_size,
+        ),
+        params=RetrievalParams(
+            rrf_k=r.rrf_k,
+            half_life_days=r.recency_half_life_days,
+            recency_floor=r.recency_floor,
+            min_cosine=r.min_cosine,
+        ),
+        candidates=r.candidates,
+        chunk_max_chars=r.chunk_max_chars,
+    )
 
 
 def build_state(
@@ -51,12 +82,18 @@ def build_state(
     *,
     registry: ProviderRegistry | None = None,
     context_builder: ContextBuilder | None = None,
-    memory: MemoryProvider | None = None,
+    memory: LocalMemoryProvider | None = None,
 ) -> HubState:
     warnings = check_runtime(config, settings)
     registry = registry or ProviderRegistry.from_settings(settings)
     usage = UsageStore(_resolve(config.hub.usage_db))
     routes = config.routes
+    mem_cfg = config.hub.memory
+    if mem_cfg.enabled:
+        memory = memory or build_memory(settings, mem_cfg)
+        context_builder = context_builder or MemoryContextBuilder(memory, mem_cfg.retrieval)
+    else:
+        memory = None
     service = ChatService(
         routes=routes,
         router=Router(routes, registry),
@@ -70,7 +107,7 @@ def build_state(
         registry=registry,
         service=service,
         usage=usage,
-        memory=memory or NoOpMemoryProvider(),
+        memory=memory,
         warnings=warnings,
     )
 
@@ -81,10 +118,11 @@ def create_app(
     *,
     registry: ProviderRegistry | None = None,
     enable_mqtt: bool | None = None,
+    memory: LocalMemoryProvider | None = None,
 ) -> FastAPI:
     settings = settings or Settings()
     config = config or load_config(settings.config_dir)
-    state = build_state(settings, config, registry=registry)
+    state = build_state(settings, config, registry=registry, memory=memory)
     if enable_mqtt is not None:
         mqtt_on = enable_mqtt
     elif settings.mqtt_enabled_override is not None:
@@ -103,9 +141,23 @@ def create_app(
             version=VERSION,
             providers={p.value: a.available for p, a in avail.items()},
             usage_db=str(state.usage.path),
+            memory_dir=str(state.memory.root) if state.memory else None,
         )
-        async with devices.lifespan(app, state, mqtt_enabled=mqtt_on):
-            yield
+        tasks: list[asyncio.Task[None]] = []
+        if state.memory is not None:
+            # In the background: embedding many notes must not delay startup.
+            tasks.append(asyncio.create_task(initial_reindex(state.memory), name="mem-index"))
+            if config.hub.memory.watch:
+                tasks.append(asyncio.create_task(watch_memory(state.memory), name="mem-watch"))
+        try:
+            async with devices.lifespan(app, state, mqtt_enabled=mqtt_on):
+                yield
+        finally:
+            for t in tasks:
+                t.cancel()
+            for t in tasks:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await t
         log.info("hub_stopped")
 
     app = FastAPI(
