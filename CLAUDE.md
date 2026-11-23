@@ -6,7 +6,9 @@ Context for AI coding sessions on this repo. Read this first.
 
 A self-hosted personal AI orchestrator ("hub") in a polyglot hub-and-spoke
 monorepo. Stage 1 (done): router, LiteLLM adapters, config, FastAPI web chat +
-SSE, CLI, MQTT/HTTP hub side, protocol schemas. See README "Roadmap" for stages 2-5.
+SSE, CLI, MQTT/HTTP hub side, protocol schemas. Stage 2 (done): memory (markdown
+notes in ~/hub-memory, FTS5 + sqlite-vec hybrid retrieval, prompt injection,
+read-only MCP server). See README "Roadmap" for stages 3-5.
 
 The owner is a mechanical/structural engineer who writes Python daily. Favor
 clear, well-typed, readable code over cleverness; explain non-obvious decisions
@@ -22,6 +24,9 @@ uv run pytest                             # all offline tests (~6 s)
 uv run pytest -m integration              # live provider calls; needs keys; costs money
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 uv run datamodel-codegen                  # regenerate hub/src/hub/events/generated
+uv run hub remember "text" -s private     # save a note (needs the hub running)
+uv run hub memory search "q"              # also: recent | reindex | stats
+uv run hub mcp                            # MCP stdio server (read-only memory)
 uv run python hub/tests/integration/fake_ollama.py --port 11434   # manual local testing
 ```
 
@@ -39,7 +44,13 @@ pytest, a stale-generated-models check, and `docker compose config`.
 | `providers/` | `ProviderAdapter` protocol, `LiteLLMAdapter`, `ProviderRegistry` |
 | `routing/` | `KeywordClassifier` (route=auto), `Router` (fallback + locality guard) |
 | `pipeline.py` | `ChatService`: classify, ContextBuilder, Router, cost, usage log. Every interface goes through it |
-| `memory/`, `context/` | Stage-2 extension points (protocols + no-op/pass-through) |
+| `memory/notes.py` | Markdown + front matter, sensitivity resolution (fails closed), chunking, atomic writes |
+| `memory/index.py` | SQLite index: FTS5 + sqlite-vec, sensitivity filtered in SQL; derived data |
+| `memory/embedder.py` | `OllamaEmbedder` (local only, refuses otherwise) |
+| `memory/retrieval.py` | Pure math: RRF fusion, recency, cosine gate, token budget |
+| `memory/store.py` | `LocalMemoryProvider` (put/get/search/reindex); `watch.py` re-indexes on edits |
+| `context/memory_builder.py` | `MemoryContextBuilder`: injects notes capped by the ROUTE's ceiling |
+| `mcp_server.py` | Read-only MCP tools (SDK 2.x `MCPServer`), mounted at `/mcp/` and via `hub mcp` |
 | `usage/` | Pricing (config-only) and SQLite usage store (metadata only) |
 | `events/` | Generated protocol models, `ProtocolValidator`, `EventBus`, `InputSource` |
 | `transports/mqtt.py` | aiomqtt client; `handle()` never raises |
@@ -70,6 +81,17 @@ pytest, a stale-generated-models check, and `docker compose config`.
    it. It is pinned exactly; `LITELLM_LOCAL_MODEL_COST_MAP=True` is set in
    `hub/__init__.py` so importing it makes no network call.
 9. Don't use em or en dashes in prose you write for the owner.
+10. **Memory sensitivity fails closed.** Missing, unknown or unreadable sensitivity
+    means PRIVATE; folder and front matter combine to the most restrictive.
+    PRIVATE notes reach only `local_only` routes, decided by the route ceiling
+    (`max_sensitivity_for`), never by the answering model.
+11. **MCP never serves private notes** and has no write tools. A capped note and a
+    missing note must stay indistinguishable.
+12. **Embeddings are local only** (same locality rules as the private route).
+13. **Tests never touch `~/hub-memory` or the repo's `data/`:** pass temp dirs; the
+    autouse fixture in `tests/conftest.py` points HOME at a temp dir as a backstop.
+    Memory privacy changes need a tripwire test (`test_memory_builder.py`,
+    `test_mcp_server.py`).
 
 ## Conventions
 
@@ -82,9 +104,12 @@ pytest, a stale-generated-models check, and `docker compose config`.
 * Tests: `pytest-asyncio` auto mode; tests import fakes as `from tests.fakes import ...`.
 * Small, logical commits with descriptive messages.
 
-## Stage-2 entry points
+## Extension points
 
-Implement `MemoryProvider` (`memory/protocol.py`) and a `ContextBuilder` that calls
-`memory.search(..., max_sensitivity=max_sensitivity_for(ctx.locality_ceiling))`, then
-pass it to `build_state(..., context_builder=..., memory=...)` in `api/app.py`.
-New input sources implement `events.bus.InputSource` and publish to the `EventBus`.
+* Memory: `build_state(..., memory=..., context_builder=...)` in `api/app.py`
+  accepts any `LocalMemoryProvider` / `ContextBuilder` (tests inject `FakeEmbedder`).
+* MCP is in SDK 2.x: `from mcp.server.mcpserver import MCPServer` (not FastMCP);
+  test with the in-process `mcp.Client(server)`; expected tool failures raise
+  `mcp.server.mcpserver.exceptions.ToolError`.
+* New input sources implement `events.bus.InputSource` and publish to the `EventBus`.
+  Do not write device/screen input into memory without review (prompt injection).

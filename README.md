@@ -4,14 +4,17 @@ A self-hosted orchestrator that runs on a home PC (Windows or Linux; Raspberry P
 later). It routes each request to the right LLM (Claude, Gemini, Meta Muse, or a
 local Ollama model) with automatic fallback. It logs which model answered, the
 tokens used and the cost, and it keeps a **private** route that provably never
-leaves your machine. It is also the hub for future devices: an M5Stack CoreS3
+leaves your machine. It has its own **memory**: markdown notes in `~/hub-memory`,
+searched and injected into prompts, with private notes only ever shown to local
+models, and readable from Claude Desktop / Claude Code over MCP. It is also the
+hub for future devices: an M5Stack CoreS3
 voice satellite, phone events and cameras, all speaking one versioned protocol
 over MQTT and HTTP.
 
 ```
                  ┌────────────── hub (this repo: hub/) ──────────────┐
  web chat ─HTTP─▶│ API ─▶ classifier ─▶ ContextBuilder ─▶ Router ─────┼─▶ Anthropic
- CLI ──────HTTP─▶│  (SSE)   (auto)      (stage 2: memory)  │ fallback ├─▶ Gemini
+ CLI ──────HTTP─▶│  (SSE)   (auto)      (+ ~/hub-memory)   │ fallback ├─▶ Gemini
  Tasker/HA ─HTTP▶│ /events ─┐                              │ locality ├─▶ Meta Model API
  CoreS3 ───MQTT─▶│ Mosquitto┴▶ validate ▶ EventBus          │  guard   └─▶ Ollama (local)
          ──WS───▶│ /ws/audio (stub)       usage.sqlite3 ◀───┘                 │
@@ -62,13 +65,18 @@ which a container can't reach, so for the private route either run the hub nativ
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `POST` | `/chat` | API token* | `{messages, route?, stream?, max_tokens?, temperature?}`. `messages[].images[]` = `{media_type, data_b64}`. Returns JSON, or SSE if `stream: true` |
+| `POST` | `/chat` | API token* | `{messages, route?, stream?, max_tokens?, temperature?, use_memory?}`. `messages[].images[]` = `{media_type, data_b64}`. Returns JSON, or SSE if `stream: true` |
 | `GET` | `/providers` | API token* | Provider availability, models, routes, config warnings |
 | `GET` | `/health` | none | Liveness |
 | `GET` | `/usage/recent?limit=20` | API token* | Last N rows of the usage log |
 | `GET` | `/devices` | API token* | Declared devices and MQTT presence |
 | `POST` | `/events/{device_id}` | device token | Same envelope as MQTT, for Tasker / Home Assistant |
 | `WS` | `/ws/audio/{device_id}` | device token | Stub (closes with 1013) |
+| `GET` | `/memory/search?q=&k=5&max_sensitivity=private` | API token* | Hybrid search of your notes |
+| `GET` | `/memory/notes/{id}` · `/memory/recent` · `/memory/stats` | API token* | Read notes / index status |
+| `POST` | `/memory` | API token* | `{text, title?, sensitivity?, tags?}`: save a note |
+| `POST` | `/memory/reindex` | API token* | Re-scan `~/hub-memory` (normally automatic) |
+| `POST` | `/mcp/` | API token* | MCP Streamable HTTP endpoint (read-only memory tools) |
 
 \* Only when `HUB_API_TOKEN` is set (mandatory for non-loopback binds). OpenAPI docs: `/docs`.
 
@@ -138,13 +146,17 @@ first matching rule wins.
 | `usage_db` | `data/usage.sqlite3` | Relative to the repo root |
 | `log_level` / `log_format` | `INFO` / `console` | `json` for machine-readable logs |
 | `devices[]` | | `{id, kind, description}`; tokens in `HUB_DEVICE_TOKENS` |
+| `memory.enabled` / `dir` / `index_db` / `watch` | `true` / `~/hub-memory` / `data/memory_index.sqlite3` / `true` | Notes are the source of truth; the index is derived |
+| `memory.embedding.model` | `nomic-embed-text` | Must be pulled in your **local** Ollama; a non-local embedder is refused at startup |
+| `memory.retrieval.*` | `candidates 20`, `inject_max 6`, `rrf_k 60`, `recency_half_life_days 180`, `recency_floor 0.7`, `min_cosine 0.35`, `token_budget 1500`, `chunk_max_chars 1600` | See "Memory" below |
+| `memory.mcp.enabled` / `max_sensitivity` | `true` / `personal` | `public` or `personal` only: private notes are never served over MCP |
 
 ### Environment (`.env`)
 
 `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `META_API_KEY` (or `MODEL_API_KEY`),
 `OLLAMA_API_BASE`, `HUB_API_TOKEN`, `HUB_DEVICE_TOKENS` (JSON object),
 `HUB_MQTT_USERNAME`, `HUB_MQTT_PASSWORD`. Overrides: `HUB_HOST`, `HUB_PORT`,
-`HUB_CONFIG_DIR`, `HUB_MQTT_HOST`, `HUB_MQTT_ENABLED`, `HUB_ROOT`.
+`HUB_CONFIG_DIR`, `HUB_MQTT_HOST`, `HUB_MQTT_ENABLED`, `HUB_MEMORY_DIR`, `HUB_ROOT`.
 
 ## Routing and fallback
 
@@ -175,6 +187,85 @@ Every request (metadata only, no text) is logged to `data/usage.sqlite3`:
 ```bash
 sqlite3 data/usage.sqlite3 "select route, model_alias, sum(input_tokens), sum(output_tokens), sum(cost_usd) from requests group by 1,2"
 ```
+
+## Memory
+
+The hub's memory is a folder of markdown notes, `~/hub-memory` by default: edit
+it with any editor (Obsidian works well), back it up, sync it. The search index
+(`data/memory_index.sqlite3`) is derived and rebuilds itself. Design: ADR 0005.
+
+```bash
+ollama pull nomic-embed-text                      # local embedding model (once)
+uv run hub remember "Preload M10 8.8 bolts to 75% of proof load" -t fasteners
+uv run hub remember "ACME bank account 9876-5432" -s private
+uv run hub memory search "bolt preload"
+uv run hub memory recent
+```
+
+Or use the **Remember** button in the web chat. Files you create or edit by hand
+are re-indexed automatically within a couple of seconds.
+
+### Sensitivity
+
+| Level | Who may see it |
+|---|---|
+| `public` | any route, MCP |
+| `personal` (default for `hub remember`) | any route you chose, including cloud models; MCP |
+| `private` | **only `local_only` routes** (the `private` route). Never cloud, never MCP |
+
+A note's level is the **most restrictive** of its front matter
+(`sensitivity: personal`) and its top-level folder (`private/`, `personal/`,
+`public/`). A note with neither, an unknown value, or broken front matter is
+treated as **private**.
+
+The cap is applied using the **route's** ceiling: on the `default` route
+(claude, then gemini, then local), private notes are withheld even if the local
+fallback ends up answering.
+
+### How retrieval works
+
+Keyword search (SQLite FTS5, BM25, Porter stemming) and vector search
+(sqlite-vec, cosine) each return their top candidates, which are combined by
+Reciprocal Rank Fusion (Cormack et al., SIGIR 2009), then weighted by age:
+
+RRF(d) = Σ 1 / (60 + rank_r(d)),   s(d) = RRF(d) · [0.7 + 0.3 · 2^(−Δt / 180 days)]
+
+Vector hits below cosine 0.35 are ignored, and the best chunks are injected up to
+about 1,500 tokens. Each answer lists the notes it used (`memory_used`, shown as
+chips in the UI); set `use_memory: false` (or untick **memory**) to skip lookup.
+If Ollama is down, search falls back to keyword-only.
+
+### MCP: use your memory from Claude Desktop / Claude Code
+
+Read-only tools `search_memory`, `get_memory` and `recent_memories`, capped at
+`personal`. Design and the deferred claude.ai (web) connector: ADR 0006.
+
+Claude Desktop (`claude_desktop_config.json`), stdio:
+
+```json
+{
+  "mcpServers": {
+    "hub-memory": {
+      "command": "uv",
+      "args": ["run", "--directory", "C:/path/to/Pauls-Orchestrator", "hub", "mcp"]
+    }
+  }
+}
+```
+
+Claude Code, stdio or the running hub's HTTP endpoint:
+
+```bash
+claude mcp add hub-memory -- uv run --directory /path/to/Pauls-Orchestrator hub mcp
+```
+
+```bash
+claude mcp add --transport http hub-memory http://127.0.0.1:8765/mcp/
+```
+
+The stdio server only reads the index, so keep `hub serve` running (or run it
+once) to index new notes. **claude.ai on the web cannot reach it:** that needs a
+public endpoint with OAuth, deliberately not built (ADR 0006).
 
 ## Verified model IDs (2026-11-23)
 
@@ -220,7 +311,7 @@ uv run datamodel-codegen           # after editing protocol/schemas
 
 | Path | What |
 |---|---|
-| `hub/` | Python orchestrator (stage 1) |
+| `hub/` | Python orchestrator |
 | `protocol/` | Inter-device contract: JSON Schemas, MQTT topic tree, changelog, fixtures |
 | `deploy/mosquitto/` | Broker config, ACL, password-file generator |
 | `docs/adr/` | Architecture decision records |
@@ -229,15 +320,21 @@ uv run datamodel-codegen           # after editing protocol/schemas
 ## Roadmap
 
 1. **Orchestrator core** (done): router, adapters, config, web chat, CLI, MQTT/HTTP hub side
-2. **Memory**: markdown + vector index, a `ContextBuilder` that injects relevant memory, MCP server for claude.ai
+2. **Memory** (done): markdown notes + FTS5/vector index, hybrid retrieval, memory injection, local MCP server. Public claude.ai connector deferred (ADR 0006)
 3. **Verify mode**: fan one prompt out to N models; a judge model highlights disagreements
 4. **Inputs**: screenpipe (MCP), phone events (webhook), camera frames (go2rtc snapshots)
 5. **CoreS3 voice satellite**: on-device wake word; faster-whisper STT and Piper TTS on the hub
 
-## Known limitations (stage 1)
+## Known limitations
 
-* Conversation history lives in the browser tab; the hub stores no transcripts (memory is stage 2).
+* Conversation history lives in the browser tab; the hub stores no transcripts. Memory holds only notes you save explicitly.
 * `auto` is keyword-based: transparent and deterministic, but blunt.
 * Cloud availability means "key present". The first real call is what verifies the key.
 * Mid-stream failures are not retried on another model, by design.
 * MQTT runs over plain TCP on the LAN; the TLS listener is documented but off.
+* Memory injection labels notes as reference data, which reduces prompt-injection risk from note text but cannot eliminate it.
+* Memory keyword search uses an English stopword list and stemmer.
+* The MCP server is local only (stdio, loopback HTTP); claude.ai on the web cannot use it yet.
+* In Docker, create `~/hub-memory` before `docker compose up` and set `HUB_UID`/`HUB_GID` if your
+  user isn't 1000. On Docker Desktop (Windows/macOS) file-change events may not reach the
+  container; run `hub memory reindex` after editing notes by hand.
