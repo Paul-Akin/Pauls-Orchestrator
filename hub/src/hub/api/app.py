@@ -17,6 +17,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from hub import __name__ as _pkg
 from hub.api import chat, devices, system
+from hub.api import memory as memory_api  # aliased: create_app has a `memory` parameter
 from hub.config import AppConfig, MemoryConfig, check_runtime, load_config
 from hub.context.builder import ContextBuilder, PassThroughContextBuilder
 from hub.context.memory_builder import MemoryContextBuilder
@@ -174,6 +175,7 @@ def create_app(
     app.include_router(system.router)
     app.include_router(chat.router)
     app.include_router(devices.router)
+    app.include_router(memory_api.router)
     static_dir = Path(str(files(_pkg).joinpath("web/static")))
     app.mount("/", StaticFiles(directory=static_dir, html=True), name="web")
     return app

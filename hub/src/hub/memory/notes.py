@@ -244,7 +244,10 @@ def chunk_note(note: Note, max_chars: int) -> list[Chunk]:
         if m:
             level, title = len(m.group(1)), m.group(2).strip()
             stack = [(lvl, t) for lvl, t in stack if lvl < level] + [(level, title)]
-            sections.append((" > ".join(t for _, t in stack), []))
+            names = [t for _, t in stack]
+            if names and names[0] == note.title:  # "# Title" duplicates the note title
+                names = names[1:]
+            sections.append((" > ".join(names), []))
         else:
             sections[-1][1].append(line)
 

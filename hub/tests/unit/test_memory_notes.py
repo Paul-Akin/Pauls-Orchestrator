@@ -75,7 +75,7 @@ def test_title_falls_back_to_heading_then_filename(tmp_path: Path) -> None:
 
 def test_chunking_by_heading_path_and_size(tmp_path: Path) -> None:
     body = (
-        "intro para\n\n# Bolts\nbolt text\n\n## Preload\n"
+        "---\ntitle: Fasteners\n---\nintro para\n\n# Bolts\nbolt text\n\n## Preload\n"
         + ("word " * 150).strip()
         + "\n\n"
         + ("more " * 150).strip()
@@ -136,3 +136,11 @@ def test_render_and_new_path_roundtrip(tmp_path: Path) -> None:
     path.touch()
     assert new_note_path(tmp_path, "Bolt Preload: rule!", created, PR).name.endswith("-2.md")
     assert not list(path.parent.glob(".tmp-*"))  # no temp files left behind
+
+
+def test_title_heading_not_repeated_in_section_path(tmp_path: Path) -> None:
+    n = read_note(
+        tmp_path, write(tmp_path, "public/nx.md", "# NX Open tips\n\n## Journals\nRun them.")
+    )
+    assert n.title == "NX Open tips"
+    assert [c.heading for c in chunk_note(n, 1600)] == ["Journals"]

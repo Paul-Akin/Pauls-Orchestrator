@@ -108,3 +108,15 @@ dialog menu { padding: 0; margin: 12px 0 0; display: flex; justify-content: flex
   .log, .composer, .bar { padding-left: 16px; padding-right: 16px; }
   #send { margin-left: 0; }
 }
+
+/* ---- memory ---- */
+.toggle { display: flex; gap: 4px; align-items: center; color: var(--muted); font-size: 13px; cursor: pointer; }
+.memory-used { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
+.chip.mem { font-family: inherit; color: var(--text); }
+.chip.mem.private { border-color: var(--ok); }
+.chip.mem.private::before { content: "🔒 "; }
+.chip.mem.public::before, .chip.mem.personal::before { content: "◆ "; color: var(--muted); }
+form.remember { display: grid; gap: 10px; min-width: min(520px, 80vw); }
+form.remember h3 { margin: 0; }
+form.remember textarea { min-height: 120px; }
+form.remember input { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; }
