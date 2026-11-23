@@ -28,6 +28,7 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-exclude = ["hub/src/hub/events/generated"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "ASYNC", "S", "PT"]
@@ -38,7 +39,6 @@ known-first-party = ["hub"]
 
 [tool.ruff.lint.per-file-ignores]
 "hub/tests/**" = ["S", "B011", "PT018", "E741"]
-"hub/src/hub/events/models.py" = ["ALL"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -56,3 +56,26 @@ pythonpath = ["hub"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = ["integration: hits a real provider; skipped unless its key/env is set"]
+
+# Protocol models are GENERATED from protocol/schemas. Regenerate with:
+#   uv run datamodel-codegen
+# CI regenerates and fails on any diff (see .github/workflows/ci.yml).
+[tool.datamodel-codegen]
+input = "protocol/schemas"
+input-file-type = "jsonschema"
+output = "hub/src/hub/events/generated"
+output-model-type = "pydantic_v2.BaseModel"
+target-python-version = "3.12"
+use-annotated = true
+field-constraints = true
+use-standard-collections = true
+use-union-operator = true
+disable-timestamp = true
+enum-field-as-literal = "all"
+use-double-quotes = true
+extra-fields = "forbid"
+use-schema-description = true
+use-field-description = true
+# Keep `ts` a str so the schema's Z-suffix pattern is enforced by pydantic too.
+type-mappings = ["string+date-time=string"]
+formatters = ["builtin"]

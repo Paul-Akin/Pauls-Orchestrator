@@ -1,0 +1,1 @@
+{"schema_version": 1, "id": "9b1d2c3e-4f5a-4b6c-8d7e-0f1a2b3c4d5e", "correlation_id": "3f2b8c1e-5d4a-4f6b-9c2d-1a2b3c4d5e6f", "device_id": "cores3-desk", "ts": "2026-11-23T14:05:10.000Z", "type": "tts.play", "payload": {"text": "Alex is running late."}}

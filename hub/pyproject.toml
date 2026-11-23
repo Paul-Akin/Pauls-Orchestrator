@@ -16,6 +16,8 @@ dependencies = [
     "structlog>=24.4",
     "aiomqtt>=2.3",
     "jsonschema>=4.23",
+    # Makes jsonschema actually check format: date-time (otherwise silently skipped).
+    "rfc3339-validator>=0.1.4",
 ]
 
 [project.scripts]
