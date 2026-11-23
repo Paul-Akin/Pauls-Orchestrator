@@ -1,0 +1,14 @@
+# Mosquitto ACL. Devices never see each other's traffic (hub-and-spoke).
+#
+# The hub's service account (HUB_MQTT_USERNAME, default "hub") can do anything.
+user hub
+topic readwrite #
+
+# Every other account is a device whose USERNAME == device_id (%u).
+# A device may only publish its own events and status, and only read its own
+# commands plus the hub's presence.
+pattern write hub/%u/event/+
+pattern read device/%u/cmd/+
+pattern readwrite device/%u/status
+# Shared topic: Mosquitto warns that it has no %u/%c. That is intended.
+pattern read hub/status

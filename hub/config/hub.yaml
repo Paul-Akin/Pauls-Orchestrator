@@ -1,0 +1,25 @@
+# Non-secret hub settings. Secrets live in .env (see .env.example).
+
+server:
+  host: 127.0.0.1        # loopback only by default
+  port: 8765
+  allow_lan: false       # set true AND set HUB_API_TOKEN to bind to a LAN address
+
+mqtt:
+  enabled: false         # true once Mosquitto is running (docker compose up mosquitto)
+  host: 127.0.0.1
+  port: 1883
+  client_id: hub
+
+usage_db: data/usage.sqlite3   # relative paths are resolved against the repo root
+log_level: INFO
+log_format: console            # console | json
+
+# Devices allowed to talk to the hub. Tokens go in HUB_DEVICE_TOKENS in .env.
+devices:
+  - id: cores3-desk
+    kind: cores3
+    description: M5Stack CoreS3 voice satellite (future)
+  - id: phone-paul
+    kind: android
+    description: Tasker / Home Assistant webhooks

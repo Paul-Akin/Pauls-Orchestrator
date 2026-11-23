@@ -1,0 +1,110 @@
+:root {
+  --bg: #f7f7f5;
+  --panel: #ffffff;
+  --text: #1d1d1f;
+  --muted: #6b6b70;
+  --border: #e2e2de;
+  --accent: #2f5bd3;
+  --accent-text: #ffffff;
+  --user: #eef2fd;
+  --ok: #1f7a3d;
+  --warn: #9a5b00;
+  --err: #b3261e;
+  --badge: #f0f0ec;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161618;
+    --panel: #1f1f22;
+    --text: #ececef;
+    --muted: #9a9aa2;
+    --border: #333338;
+    --accent: #7c9cff;
+    --accent-text: #0e0e10;
+    --user: #232a3d;
+    --ok: #5ccf85;
+    --warn: #f0b35a;
+    --err: #ff8a80;
+    --badge: #2a2a2e;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.bar {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--panel);
+}
+.brand { font-weight: 700; letter-spacing: .02em; }
+.providers { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip {
+  font: 12px var(--mono); padding: 2px 8px; border-radius: 999px;
+  background: var(--badge); color: var(--muted); border: 1px solid var(--border);
+}
+.chip.on::before { content: "● "; color: var(--ok); }
+.chip.off::before { content: "○ "; }
+
+.log { overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.log > * { max-width: 860px; width: 100%; margin: 0 auto; }
+.empty { text-align: center; margin-top: 12vh; }
+.muted { color: var(--muted); }
+
+.msg { border-radius: 12px; padding: 10px 14px; border: 1px solid var(--border); background: var(--panel); }
+.msg.user { background: var(--user); }
+.msg .body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg .thumbs { display: flex; gap: 6px; margin-top: 6px; }
+.msg .thumbs img { height: 64px; border-radius: 6px; border: 1px solid var(--border); }
+.msg.pending .body::after { content: "▍"; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+.meta { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.badge { font: 12px var(--mono); padding: 1px 8px; border-radius: 6px; background: var(--badge); color: var(--muted); }
+.badge.model { color: var(--text); font-weight: 600; }
+.badge.local { color: var(--ok); }
+.badge.fallback { color: var(--warn); }
+.badge.error { color: var(--err); }
+details.attempts { font: 12px var(--mono); color: var(--muted); width: 100%; }
+details.attempts summary { cursor: pointer; }
+details.attempts li { list-style: none; }
+
+.composer {
+  border-top: 1px solid var(--border); background: var(--panel);
+  padding: 10px 16px; display: grid; gap: 8px;
+}
+.composer > * { max-width: 860px; width: 100%; margin: 0 auto; }
+textarea {
+  resize: vertical; min-height: 48px; max-height: 40vh; width: 100%;
+  padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); font: inherit;
+}
+.controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.route { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
+select, button, .attach span {
+  font: inherit; font-size: 14px; padding: 6px 12px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+}
+.attach span { cursor: pointer; display: inline-block; }
+button { cursor: pointer; }
+#send { margin-left: auto; background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: progress; }
+.attachments { display: flex; gap: 6px; flex-wrap: wrap; }
+.attachments:empty { display: none; }
+.attachments figure { margin: 0; position: relative; }
+.attachments img { height: 48px; border-radius: 6px; border: 1px solid var(--border); }
+.attachments button { position: absolute; top: -6px; right: -6px; padding: 0 6px; font-size: 12px; border-radius: 999px; }
+
+dialog { border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text); }
+dialog input { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+dialog menu { padding: 0; margin: 12px 0 0; display: flex; justify-content: flex-end; }
+@media (max-width: 600px) {
+  .log, .composer, .bar { padding-left: 16px; padding-right: 16px; }
+  #send { margin-left: 0; }
+}

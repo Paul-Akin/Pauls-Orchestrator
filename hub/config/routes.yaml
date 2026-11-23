@@ -1,0 +1,79 @@
+# Model and route table. Model IDs were checked against LiteLLM 1.110.2's model
+# table (see README "Verified model IDs"); edit freely.
+#
+# Prices: USD per 1,000,000 tokens. Left null on purpose. Fill them in from the
+# vendor's pricing page; the hub NEVER guesses. Null => "price not configured".
+
+models:
+  claude:
+    provider: anthropic
+    model: claude-opus-5-5
+    vision: true
+    timeout_s: 60
+    price: { input_per_mtok: null, output_per_mtok: null }   # placeholder
+  claude_fast:
+    provider: anthropic
+    model: claude-haiku-5-5
+    vision: true
+    timeout_s: 30
+    price: { input_per_mtok: null, output_per_mtok: null }   # placeholder
+  gemini:
+    provider: gemini
+    model: gemini-3.1-pro-preview
+    vision: true
+    timeout_s: 60
+    price: { input_per_mtok: null, output_per_mtok: null }   # placeholder
+  muse:
+    provider: meta
+    model: muse-spark-1.3
+    vision: true
+    timeout_s: 60
+    price: { input_per_mtok: null, output_per_mtok: null }   # placeholder
+  local:
+    provider: ollama
+    model: llama3.2          # any model you have pulled: `ollama list`
+    vision: false
+    timeout_s: 120           # first token can be slow on CPU / cold load
+    price: { input_per_mtok: 0, output_per_mtok: 0 }         # runs on your hardware
+
+routes:
+  default:
+    primary: claude
+    fallback: [gemini, local]
+    description: General questions.
+  engineering_reasoning:
+    primary: claude
+    fallback: [gemini]
+    description: Mechanics, structures, FEA, NX Open, derivations.
+  long_context:
+    primary: gemini
+    fallback: [claude]
+    description: Very long inputs (large logs, documents).
+  cheap_bulk:
+    primary: muse
+    fallback: [local]
+    description: High-volume, low-stakes work.
+  private:
+    primary: local
+    fallback: []
+    local_only: true         # enforced in code: can never reach a cloud provider
+    description: Never leaves this machine.
+
+# Heuristics for `route: auto`. No LLM call. Rules targeting local_only routes are
+# always evaluated first (auto may escalate TO privacy, never away from it); the
+# rest are evaluated top to bottom, first match wins.
+classifier:
+  default_route: default
+  rules:
+    - route: private
+      any: [password, passwd, ssn, social security, bank account, routing number,
+            medical, diagnosis, prescription, "private:", confidential]
+    - route: long_context
+      min_chars: 60000
+    - route: engineering_reasoning
+      any: [stress, strain, beam, buckling, fatigue, fea, finite element, nastran,
+            nx open, modal, natural frequency, deflection, moment of inertia,
+            von mises, shigley, roark, timoshenko, torque, preload, weld, bolt,
+            heat transfer, thermal, derivation, derive]
+    - route: cheap_bulk
+      any: [summarize each, classify these, bulk, batch, for each of]
