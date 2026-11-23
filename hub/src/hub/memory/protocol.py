@@ -78,7 +78,11 @@ class MemoryProvider(Protocol):
         self, query: str, *, k: int = 5, max_sensitivity: Sensitivity = Sensitivity.PERSONAL
     ) -> list[MemoryItem]: ...
 
-    async def get(self, item_id: str) -> MemoryItem | None: ...
+    async def get(
+        self, item_id: str, *, max_sensitivity: Sensitivity = Sensitivity.PERSONAL
+    ) -> MemoryItem | None:
+        """A whole note, or None if missing OR above ``max_sensitivity`` (indistinguishable)."""
+        ...
 
     async def put(self, item: NewMemoryItem) -> str:
         """Store an item and return its id."""

@@ -11,7 +11,9 @@ class NoOpMemoryProvider:
     ) -> list[MemoryItem]:
         return []
 
-    async def get(self, item_id: str) -> MemoryItem | None:
+    async def get(
+        self, item_id: str, *, max_sensitivity: Sensitivity = Sensitivity.PERSONAL
+    ) -> MemoryItem | None:
         return None
 
     async def put(self, item: NewMemoryItem) -> str:
