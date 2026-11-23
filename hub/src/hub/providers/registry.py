@@ -45,6 +45,13 @@ class ProviderRegistry:
     def get(self, name: ProviderName) -> ProviderAdapter:
         return self._adapters[name]
 
+    async def warm(self) -> None:
+        """Import LiteLLM off the event loop at startup so the first chat isn't slow."""
+        if any(isinstance(a, LiteLLMAdapter) for a in self._adapters.values()):
+            from hub.providers.litellm_adapter import _load_litellm
+
+            await asyncio.to_thread(_load_litellm)
+
     async def availability(self) -> dict[ProviderName, Availability]:
         names = list(self._adapters)
         results = await asyncio.gather(*(self._adapters[n].availability() for n in names))

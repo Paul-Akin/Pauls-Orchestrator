@@ -91,6 +91,7 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         for w in state.warnings:
             log.warning("config_warning", detail=w)
+        await state.registry.warm()
         avail = await state.registry.availability()
         log.info(
             "hub_started",
